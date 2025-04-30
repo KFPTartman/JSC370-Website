@@ -6,109 +6,188 @@ output:
         toc: TRUE
         toc_float: TRUE
 ---
+# 1. Introduction
 
-This is my JSC370 Final Project website.
+## 1.1 Introduction
+The Olympics is one of the world's greatest sporting events that occurs once every 4 years, where
+athletes from across the globe compete for national pride and athletic
+excellence. While factors such as training and talent plays a
+significant role in an athlete's success, economic conditions may also
+influence a country's ability to produce medal-winning athletes.
+Wealthier countries may have better sports facilities, higher government
+investments in athletics, and greater access to elite coaching, which
+could contribute to higher Olympic medal counts. Thus, in this project,
+I would like to explore the relationship between economic indicators and
+medal counts in a country, aiming to identify which economic factors
+best predict the number of medals a country wins.
+
+To investigate this, I will use two datasets:
+
+**1.  Historical Olympic Medals Dataset** 
+
+  The Kaggle dataset,"Historical Olympic Medals Data (1994-2024)", provides medal counts for
+each nation across multiple Olympic Games. This dataset includes
+information on the number of gold, silver, and bronze medals won by each
+country.
+
+**2.  WorldBank Open Data API**
+
+  This API is used to retrieve economic indicators such as GDP per capita, education expenditure,
+health expenditure, population size, and unemployment rate for each
+country per year. These indicators provide insight into a country’s
+overall economic strength, investment in human capital, and potential
+capacity to support athletic programs.
+
+  I will merge these two datasets to create one data frame that shows the
+total number of medals won and the economic performance of a country in
+a specific year.
+
+    
+  So the research question that I will answer in this project is: “How do economic conditions influence a country’s success in the Olympics, and which indicators best predict medal performance". This question will allow us to assess how different economic factors correlate with a country’s performance, providing insights into the role of economic success in global sports competition. Additionally, I am planning to add a predictive modeling section, using the 2022 Olympic data to do the following:
+
+1.  Model Development: Multiple models will be created to predict medal
+    count based on a country’s economic measures, using data from
+    2000-2020.
+2.  2022 Medal Predictions: Using 2022’s economic performance, the
+    developed models will generate predictions for the number of medals
+    each country is expected to win.
+3.  Model Evaluation: The predicted medal counts will be compared to the
+    actual 2022 Olympic results to assess model accuracy and identify
+    which economic factor best predicts a country’s Olympic success.
+    This will provide insights on how well economic success alone can
+    predict a country’s success in the olympics and explore which
+    economic indicators are the strongest predictors of medal success.
+
+My hypothesis for the first part of the question: “How do economic
+conditions influence a country’s success in the Olympics” is that I
+expect country with high economic measures to perform well in the
+Olympics due to the investments and quality of training that the
+athletes can gain.
+
+# 2. Introduction
+
+## 2.1 Data Acquiring
+
+  As mentioned in the introduction I used WorldBank Open Data API for economic indicators and Historical Olympic Medals Dataset for medal counts.
+
+  For the WorldBank Open Data API, I had to make API calls to gather the data. The API call had a limit of 500 so I had to make multiple GET requests to retrieve a complete dataset. Furthermore, the API was queried separately for each economic indicator (GDP per capita, Government expenditure on education, Health expenditure, Total population, Unemployment rate). Each dataset contained the CountryCode in ISO3 format, the Year, and the respective economic indicator for that country in the specified year. Then I merged each data by CountryCode and year. 
+
+  The Olympic Medal Data, was a kaggle dataset so I downloaded it and read it as a datatable in R. The datasets contained CountryCode in NOC, the number of Gold, Silver, and Bronze medals won, and the total number of medals won by that country. Since there was one csv file per year, I merged the datasets by Country and Year. One note is that, the dataset only contained entries for countries that won at least one medal for that year. Since countries that did not win medals were absent from the dataset, I padded them with 0 medals to ensure accurate analysis.
+
+  After preparing both datasets, I merged them by matching the CountryCode from the World Bank dataset with the NOC codes from the Olympic dataset. However, NOC codes (CountryCode used in olympics) differ from ISO3 country codes, so for those countries whose codes did not map, I had to manually map the NOC code to a ISO3 code. (Could not do this for all countries as there were quite a number of them). Then I merged the two datasets together by Year and CountryCode. Lastly, I downloaded a dataset that maps ISO3 country code to Country Names using the WorldBank Open Data API and merged them to add a CountryName column for readability.
+  
+## 2.2 Data Cleaning & Wrangling
+
+After acquiring the dataset, several preprocessing steps were performed to ensure the data was clean, properly formatted, and is ready for analysis.
+
+**2.2.1 Enhancing Readability and Removing Unnecessary Columns**
+To improve the interpretability of the dataset, the following changes were made:
+
+- Renaming Columns:
+
+Economic indicators obtained from the World Bank API were originally stored under their respective API codes. These were renamed for clarity. For example, "SE.XPD.TOTL.GD.ZS" was renamed to "Education_Expenditure"
+
+- Adjusting the Population Scale:
+
+Population values were originally recorded as raw counts which are too large to read and interpret efficiently. Thus, these values were converted into millions.
+
+- Introducing new Columns:
+
+The new variable that I introduced is **Season** which takes value "Summer" if the olympic was held in the Summer and "Winter" if the olympics was held in the Winter. The reason why I introduced this variable is because, first, the total number of medals given out is less for Winter Olympics than for Summer Olympics, and because many countries excels in Winter Sports than others. In order to for the model to capture these changes, I have decided to introduce this variable.
+
+- Dropping Unnecessary Columns:
+
+The original Olympic dataset contained separate columns for gold, silver, and bronze medals. Since this analysis only considers total medal count, these columns were removed.
+Table 1 below presents the final list of variables in the cleaned dataset that has 9 columns and 892 rows:
+
+```{r, echo = FALSE}
+variable_summary_table
+```
+
+**2.2.2 Handling NA observations**
+
+Our dataset initially contained a total of 357 NA values over 4 economic indicators: 35 in GDP per capita, 198 in Education Expenditure, 55 in Health Expenditure, and 12 in Unemployment Rate. However, removing them from the dataset would have significantly reduced the dataset, leading to a loss of valuable data. Therefore, instead of dropping all NA observations, I applied imputation to keep as much information as possible.
+
+Imputation is the process of replacing missing values with estimated values based on the existing data. In this case, I used median imputation, where missing values for each economic indicator were replaced with the median value of that country. This approach is effective because the median is resistant to outliers, unlike the mean and it provides a reasonable estimate without introducing a huge artificial bias as values are not generated.
+
+
+However, this approach is problematic when a country is missing a significant portion of its data for an economic indicator, as imputing in this scenario would introduce too much uncertainty. To address this, I decided to remove countries that had had more than 6 NA values in at least one economic indicator. I decided to use 6 as the threshold because there were 12 Olympic Games from 2000 to 2022, so if a country has more than 6 NA values, it means the country has more than half of its data missing for an economic indicator. This threshold ensures that only countries with a reasonable amount of data for imputation remain in the dataset.
+
+This approach led me to remove a total of 10 countries from the dataset, such as North Korea, Colombia, and Channel Islands. And after removing the NA values I decided to perform imputation to minimize the loss of data.
+
+**2.2.3 Identifying Problematic Observations**
+
+To check for any problematic observations, I decided to look at the summary statistics for the economic indicator variables. As the economic indicator variables were floating point numbers, the summary presented the minimum, maximum, 1st & 3rd quadrant, median, and mean. Most of the values presented were in a reasonable range without any negative values. However, there were two numbers that struck me: maximum GDP per capita of 99,677.47 and maximum unemployment rate of 26.71 as these values were much larger than the 3rd quartile presented in the summary.
+
+To take a deeper look at these values and any other extreme observations I decided to filter the following observations: entries with GDP per capita greater than 90,000 and unemployment rate greater than 20%. Filtering for GDP per capita > 90,000 showed that there was only one row of extreme observation: Ireland in 2022 with GDP per Capita of 99677.47. After checking with external sources, I confirmed that this value accurately reflects Ireland’s GDP. As a result, I decided to keep this observation.
+
+Similarly, I decided to look at all of the data entries with an unemployment rate greater than 20%. This time there were a total of 18 rows, including countries such as Gabon, Greece, and Namibia to have an unemployment rate over 20% in certain years. After checking external sources, such as macrotrends.net, I came to the conclusion that these unemployment rates were legitimate values that occurred during economic crisis, so I decided to keep them in the dataset.
+
+While reviewing the dataset, I also noticed that the maximum population of 1,425.42 million is extremely high. However, given that China and India both have populations exceeding 1.4 billion, this value is realistic.  
+
+Thus, while there were extreme points in the dataset, no data points were removed.
+
+## 2.3 Data Cleaning & Wrangling
+
+After cleaning and wrangling, summary statistics were computed for the updated dataset which contained 772 rows with 9 columns. The table below presents the minimum, first quartile (Q1), median, third quartile (Q3), mean, maximum, and number of missing values.
+
+```{r, echo = FALSE}
+summary_gt_table
+```
+
+## 2.4 Preliminary Results
+
+**2.4.1 Top Performing Nations in Olympics**
+```{r, echo = FALSE, fig.width=7, fig.height=5, fig.align = 'center'}
+df <- merged_olympics_gdp
+
+# Summarize total medals per country
+top_countries <- df %>%
+  group_by(CountryName) %>%
+  summarise(Total_Medals = sum(Total_Medals, na.rm = TRUE)) %>%
+  arrange(desc(Total_Medals)) %>%
+  head(10)
+
+# Plot
+ggplot(top_countries, aes(x = reorder(CountryName, Total_Medals), y = Total_Medals)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Figure 1: Top 10 Countries with Most Olympic Medals (2000-2022)", 
+       x = "Country", 
+       y = "Total Medals") +
+  theme_minimal()
+```
+
+Figure 1 shows the top 10 countries with the highest total medal counts from 2000 to 2022. We see that China and Germany have a much higher highest medal count compared to the other countries, suggesting that these two nations have consistently ranked among the highest in total medals. Also, since Germany and China are considered to be “wealthy” countries with good economic performance, this result suggests that having a good economic performance could affect Olympic success.
+
+It is worthy to note that countries such as France, Australia, and Japan also rank among the top medal winners, despite having smaller populations than countries like the United States or Russia, which are missing from this ranking. This suggests that factors beyond total population affect Olympic Success, hinting at the possibility that economic performance could be playing a factor here.
+
+We also see that Norway, a relatively small country in terms of population, ranks in the top 10. This could be because Norway is a country that is extremely strong in Winter Sports. This reinforces the idea that while economic strength is important, other cultural and environmental factors also play a role in shaping a country’s Olympic success.
+
 
 ```{r, include = FALSE}
-library(tidyverse)
-library(plotly)
-library(widgetframe)
-library(tidytext)
+medals_by_year <- df %>%
+  group_by(Year) %>%
+  summarise(Total_Medals = sum(Total_Medals, na.rm = TRUE))
 
-### load Starbucks and state-level data ###
-sb_locs <- read_csv("https://raw.githubusercontent.com/JSC370/JSC370-2025/refs/heads/main/data/starbucks/starbucks-locations.csv")
-
-sb_nutr <- read_csv("https://raw.githubusercontent.com/JSC370/JSC370-2025/refs/heads/main/data/starbucks/starbucks-menu-nutrition.csv")
-
-usa_pop <- read_csv("https://raw.githubusercontent.com/JSC370/JSC370-2025/refs/heads/main/data/starbucks/us_state_pop.csv")
-
-usa_states<-read_csv("https://raw.githubusercontent.com/JSC370/JSC370-2025/refs/heads/main/data/starbucks/states.csv")
-
-
-### Merge data ###
-sb_usa <- sb_locs |> filter(Country=="US")
-
-sb_locs_state <- sb_usa |>
-  group_by(`State/Province`) |>
-  rename(state=`State/Province`) |>
-  summarize(n_stores=n())
-
-# need state abbreviations
-usa_pop_abbr <- 
-  full_join(usa_pop, usa_states, 
-            by = join_by(state == State)
-  ) 
-
-sb_locs_state <- full_join(sb_locs_state, usa_pop_abbr,
-                           by = join_by (state == Abbreviation))
-
-
-### Get topwords from menu items ###
-
-topwords <- sb_nutr |>
-  unnest_tokens(word, Item, token="words") |>
-  group_by(word) |>
-  summarise(word_frequency = n()) |>
-  arrange(across(word_frequency, desc)) |>
-  head(10)
+ggplot(medals_by_year, aes(x = Year, y = Total_Medals)) +
+  geom_line(color = "red", size = 1) +
+  geom_point(color = "red", size = 2) +
+  labs(title = "Figure 2: Total Olympic Medals Over Time (2000-2022)",
+       x = "Year",
+       y = "Total Medals") +
+  theme_minimal()
 ```
 
-```{r plot1, class.source="code-r-small", include = FALSE}
-sb_nutr_long <- sb_nutr |>
-  unnest_tokens(word, Item, token = "words") |>
-  filter(word %in% topwords$word) |>
-  pivot_longer(cols = c(Calories, `Fat (g)`, `Carb. (g)`, `Fiber (g)`, `Protein (g)`), names_to = "Nutrient", values_to = "value")
-
-p1 <- plot_ly(data = sb_nutr_long,
-    x = ~word,
-    y = ~value,
-    color = ~Nutrient,
-    type = 'box') |>
-  layout(
-    title = "Nutrition values for the top10 words items",
-    xaxis = list(title = "Item Word"),
-    yaxis = list(title = "Nutrition Value"),
-    boxmode = "group"
-  )
+**2.4.2 Relationship Between GDP Per Capita and Olympic Medals**
+```{r, echo = FALSE, fig.align = 'center'}
+ggplot(df, aes(x = GDP_per_capita, y = Total_Medals)) +
+  geom_point(alpha = 0.6, color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE, formula = 'y ~ x') +
+  scale_x_log10() +  # Log scale for better visibility
+  labs(title = "Figure 2: Relationship Between GDP Per Capita and Olympic Medals",
+       x = "GDP Per Capita (USD)",
+       y = "Total Medals") +
+  theme_minimal()
 
 ```
-
-```{r plot2, class.source="code-r-small", include = FALSE}
-p2 <- sb_nutr |> 
-  unnest_tokens(word, Item, token = "words") |>
-  filter(word %in% topwords$word[1:10]) |>
-  plot_ly(
-    x = ~Calories,
-    y = ~`Carb. (g)`,
-    z = ~`Protein (g)`,
-    color = ~word,
-    type = "scatter3d",
-    mode = "markers",
-    marker = list(size = 5)
-  ) |>
-  layout(
-    title = "3D Scatterplot of Calroies, Carbs, and Protein",
-    scene = list(
-      xaxis = list(title="Calries"),
-      yxis = list(title = "Carbohydrates (g)"),
-      zaxis = list(title = "Protein (g)")
-    )
-  )
-```
-
-## Showcasing plots {.tabset}
-
-### Figure 1
-
-```{r echo=FALSE}
-p1
-```
-
-### Figure 2
-
-```{r echo=FALSE}
-p2
-```
-
-{-}
-
