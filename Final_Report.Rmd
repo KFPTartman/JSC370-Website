@@ -485,7 +485,7 @@ summary_gt_table <- summary_table %>%
 # Display the formatted table
 summary_gt_table
 ```
-# 1. Introduction
+# **1. Introduction**
 
 ## 1.1 Introduction
   The Olympics is one of the world's greatest sporting events that occurs once every 4 years, where
@@ -543,7 +543,7 @@ expect country with high economic measures to perform well in the
 Olympics due to the investments and quality of training that the
 athletes can gain.
 
-# 2. Methodology
+# **2. Methodology**
 
 ## 2.1 Data Acquiring
 
@@ -992,7 +992,7 @@ importance_matrix <- xgb.importance(feature_names = feature_names, model = xgb_p
 xgb.plot.importance(importance_matrix, top_n = 20, rel_to_first = TRUE, xlab = "Relative Importance")
 ```
 
-# 3. Results
+# **3. Results**
 
 
 ```{r, include = FALSE}
@@ -1207,7 +1207,7 @@ From the Negative Binomial plot, we see that almost all of the countries lie abo
 
 When going over to the interactive visualization, we see that all 3 of the graphs underestimate certain countries such as Canada and Germany. This reinforces the idea that economic factors are not the only indicator of Olympic success and that external factors do have a huge impact.
 
-# 4. Conclusion and Summary
+# **4. Conclusion and Summary**
 This study demonstrates that a country's economic strength is one of the key drivers of Olympic medal performance. Across the three different models (the interpretable Negative-Binomial GLM and two tree-based machine learning models: Random Forest and XGBoost), log GDP per capita and log population consistently emerged as the most important predictors. In the GLM, a 1 % rise in GDP per capita increases the expected medal haul by 0.68 %, while a 1 % rise in population contributes a further 0.54 %. The two importance plots from Fugures 5 and 6 corroborated that ranking and show a steep drop-off to the next tier of variables. While GDP per capita clearly reflects a nation’s wealth and access to athletic infrastructure, population is not strictly an economic measure; instead, it likely captures the size of the talent pool and a country’s overall capacity to field athletes across many sports. Together, these two factors form a robust baseline for predicting Olympic success.
 
 However, several other economic indicators, including health expenditure and unemployment rate, were found to be statistically insignificant or of low importance in the machine learning models. This suggests that not all economic factors are equally influential in shaping Olympic outcomes. For example, while one might expect higher health spending to correlate with better athlete performance, it may not directly impact the elite training infrastructure or sport-specific programs that lead to an excellent athlete. Similarly, macroeconomic conditions like unemployment may not meaningfully capture the focused investment required for Olympic achievement. In contrast, education expenditure did show a modest but statistically significant effect, indicating that long-term human capital investment may support athletic development in more subtle ways.
