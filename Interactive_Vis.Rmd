@@ -575,7 +575,7 @@ importance_matrix <- xgb.importance(feature_names = feature_names, model = xgb_p
 xgb.plot.importance(importance_matrix, top_n = 20, rel_to_first = TRUE, xlab = "Relative Importance")
 ```
 
-**# Interactive Visualization Page**
+# **Interactive Visualization Page**
 
 This page shows the interactive visualizations I have made for the project
 
