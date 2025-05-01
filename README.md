@@ -1,1 +1,10 @@
-My JSC370 Final Project Website
+# JSC370-Project
+
+Link to website: https://kfptartman.github.io/JSC370-Website/#1_Introduction
+
+Project Title: Predicting Olympic Medal Counts Using Linear and Machine Learning Models
+
+Project Description:
+This project investigates the relationship between a country’s economic indicators and its Olympic medal performance. By merging a Kaggle dataset of historical Olympic medal counts (1994–2022) with country-level economic data from the World Bank API, I built a comprehensive panel dataset covering economic and demographic factors across 12 Olympic Games. Three predictive models, a Negative-Binomial Generalized Linear Model, a Random Forest, and a Poisson-based XGBoost, were trained on data from 2000-2016, validated on the COVID-affected 2018/2020 Olympics, and tested on 2022 Winter Olympics outcomes.
+
+All models found GDP per capita and population to be the most influential predictors of medal count, though education expenditure showed a modest effect as well. XGBoost achieved the lowest test RMSE, but the NB-GLM produced competitive results with greater interpretability. However, substantial residual error in all models suggests that economic strength alone cannot fully explain Olympic success, underscoring the importance of unmeasured factors such as sport-specific policy, cultural investment, and national athletic strategy.
