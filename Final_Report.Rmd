@@ -1,0 +1,1397 @@
+---
+title: "JSC Final Project: Predicting Olympic Medal Counts Using Linear and Machine Learning Models"
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+# Download necessary libraries
+#install.packages("corrplot")
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(data.table)
+library(reticulate)
+library(ggplot2)
+library(gt)
+library(mgcv)
+library(dtplyr)
+library(tidyr)
+library(knitr)
+library(kableExtra)
+library(broom)
+library(splines)
+library(ggcorrplot)
+library(tidytext)
+library(wordcloud2)
+library(tm)
+library(reshape2)
+library(tidyverse)
+library(topicmodels)
+library(httr)
+library(jsonlite)
+library(purrr)
+library(corrplot)
+library(xgboost)
+library(pscl)
+library(randomForest)
+library(Metrics)
+library(MASS)
+library(caret)
+library(shiny)
+library(plotly)
+library(dplyr)
+```
+
+```{r, include = FALSE}
+fetch_wb_data <- function(indicator) {
+  wb_url <- paste0("http://api.worldbank.org/v2/country/all/indicator/", indicator)
+  
+  query_params <- list(
+    date = "2000:2023",
+    format = "json",
+    per_page = 5000
+  )
+  
+  response <- GET(url = wb_url, query = query_params)
+  data <- content(response, "text") %>% fromJSON(flatten = TRUE)
+  
+  # Check if data exists
+  if (length(data) < 2 || is.null(data[[2]])) {
+    message("No data available for ", indicator)
+    return(NULL)
+  }
+  
+  # Convert to a clean data frame
+  df <- data[[2]] %>%
+    dplyr::select(countryiso3code, date, value) %>%
+    dplyr::rename(CountryCode = countryiso3code, Year = date, !!indicator := value) %>%
+    dplyr::mutate(Year = as.double(Year))  # Convert Year to numeric
+  
+  return(df)
+}
+```
+
+```{r, include = FALSE}
+indicators <- c(
+  "NY.GDP.PCAP.KD",    # GDP per capita
+  "SE.XPD.TOTL.GD.ZS", # Government Education Expenditure (% GDP)
+  "SH.XPD.CHEX.GD.ZS", # Health Expenditure (% GDP)
+  "SP.POP.TOTL",       # Population
+  "SL.UEM.TOTL.ZS"     # Unemployment Rate (%)
+)
+
+# Fetch data for each indicator
+gdp_data <- fetch_wb_data("NY.GDP.PCAP.KD")
+edu_data <- fetch_wb_data("SE.XPD.TOTL.GD.ZS")
+health_data <- fetch_wb_data("SH.XPD.CHEX.GD.ZS")
+pop_data <- fetch_wb_data("SP.POP.TOTL")
+unemp_data <- fetch_wb_data("SL.UEM.TOTL.ZS")
+
+head(gdp_data)
+```
+
+```{r, include = FALSE}
+# Merge datasets on CountryCode and Year
+economic_data <- gdp_data %>%
+  full_join(edu_data, by = c("CountryCode", "Year")) %>%
+  full_join(health_data, by = c("CountryCode", "Year")) %>%
+  full_join(pop_data, by = c("CountryCode", "Year")) %>%
+  full_join(unemp_data, by = c("CountryCode", "Year"))
+
+# Display first few rows
+head(economic_data)
+```
+
+```{r, include = FALSE}
+#Get all of the olympic dataset
+olympic2000 <- data.table::fread("data/2000_Sydney Olympics Nations Medals.csv")
+olympic2002 <- data.table::fread("data/2002_SaltLakeCity Olympics Nations Medals.csv")
+olympic2004 <- data.table::fread("data/2004_Athens Olympics Nations Medals.csv")
+olympic2006 <- data.table::fread("data/2006_Torino Olympics Nations Medals.csv")
+olympic2008 <- data.table::fread("data/2008_Beijing Olympics_Nations_Medals.csv")
+olympic2010 <- data.table::fread("data/2010_Vancouver Olympics Nations Medals.csv")
+olympic2012 <- data.table::fread("data/2012_London Olympics Nations Medals.csv")
+olympic2014 <- data.table::fread("data/2014_Sochi Olympics Nations Medals.csv")
+olympic2016 <- data.table::fread("data/2016_Rio Olympics Nations Medals.csv")
+olympic2018 <- data.table::fread("data/2018_PyeongChang Olympics Nations Medals.csv")
+olympic2020 <- data.table::fread("data/2020_Tokyo Olympics Nations Medals.csv")
+olympic2022 <- data.table::fread("data/2022_Beijing Olympics_Nations_Medals.csv")
+```
+
+```{r, include = FALSE}
+library(dplyr)
+# Clean and Format the dataset
+clean_olympic_data <- function(df, year) {
+  df <- df %>%
+    dplyr::rename(Country = 1,  # Assuming the first column is "Country"
+           Total_Medals = ncol(df)) %>%  # Assuming the last column is "Total Medals"
+    dplyr::mutate(Year = year) %>%
+    dplyr::select(Country, Year, Total_Medals)  # Keep only relevant columns
+  return(df)
+}
+
+olympic2000_clean <- clean_olympic_data(olympic2000, 2000)
+olympic2002_clean <- clean_olympic_data(olympic2002, 2002)
+olympic2004_clean <- clean_olympic_data(olympic2004, 2004)
+olympic2006_clean <- clean_olympic_data(olympic2006, 2006)
+olympic2008_clean <- clean_olympic_data(olympic2008, 2008)
+olympic2010_clean <- clean_olympic_data(olympic2010, 2010)
+olympic2012_clean <- clean_olympic_data(olympic2012, 2012)
+olympic2014_clean <- clean_olympic_data(olympic2014, 2014)
+olympic2016_clean <- clean_olympic_data(olympic2016, 2016)
+olympic2018_clean <- clean_olympic_data(olympic2018, 2018)
+olympic2020_clean <- clean_olympic_data(olympic2020, 2020)
+olympic2022_clean <- clean_olympic_data(olympic2022, 2022)
+
+# Combine all cleaned datasets into one
+olympic_combined <- bind_rows(
+  olympic2000_clean, olympic2002_clean, olympic2004_clean, olympic2006_clean, 
+  olympic2008_clean, olympic2010_clean, olympic2012_clean, olympic2014_clean, 
+  olympic2016_clean, olympic2018_clean, olympic2020_clean, olympic2022_clean
+)
+
+olympic_combined <- olympic_combined %>% 
+  complete(Country, Year, fill = list(Total_Medals = 0))
+
+# Convert to data.table for efficient processing
+setDT(olympic_combined)
+
+# Display first few rows
+head(olympic_combined)
+```
+
+```{r, include = FALSE}
+# Unique country codes in Olympic dataset
+olympic_countries <- unique(olympic_combined$Country)
+
+# Unique country codes in GDP dataset
+gdp_countries <- unique(economic_data$CountryCode)
+
+# Find country codes in Olympics that are NOT in GDP dataset
+noc_not_in_iso3 <- setdiff(olympic_countries, gdp_countries)
+
+# Find country codes in GDP dataset that are NOT in Olympics
+iso3_not_in_noc <- setdiff(gdp_countries, olympic_countries)
+
+# Print mismatches
+print("Olympic NOC codes not in GDP dataset:")
+print(noc_not_in_iso3)
+
+print("ISO3 country codes not in Olympic dataset:")
+print(iso3_not_in_noc)
+```
+
+```{r, include = FALSE}
+# Replace some of the NOC codes with corresponding ISO3 codes for merging
+olympic_combined <- olympic_combined %>%
+  mutate(Country = recode(Country,
+                          'GER' = 'DEU',
+                          'BUL' = 'BGR',
+                          'NED' = 'NLD',
+                          'DEN' = 'DNK',
+                          'GUA' = 'GTM',
+                          'PHI' = 'PHL',
+                          'GRE' = 'GRC',
+                          'NGR' = 'NGA',
+                          'VIE' = 'VNM',
+                          'SLO' = 'SVN',
+                          'POR' = 'PRT',
+                          'MAS' = 'MYS',
+                          'NIG' = 'NER',
+                          'ZIM' = 'ZWE',
+                          'CRC' = 'CRI',
+                          'OAR' = 'RUS',
+                          'KUW' = 'KWT',
+                          'MGL' = 'MNG'))
+```
+
+```{r, include = FALSE}
+# Rename the column name for olympic games for merging
+olympic_combined <- olympic_combined %>% rename(CountryCode = Country)
+```
+
+```{r, include = FALSE}
+#Merge the olympic dataset with the economic indicator dataset
+final_data <- olympic_combined %>%
+  inner_join(economic_data, by = c("CountryCode", "Year"))
+
+# Rename columns for readability
+merged_olympics_gdp <- final_data %>%
+  rename(
+    GDP_per_capita = NY.GDP.PCAP.KD,
+    Education_Expenditure = SE.XPD.TOTL.GD.ZS,
+    Health_Expenditure = SH.XPD.CHEX.GD.ZS,
+    Population = SP.POP.TOTL,
+    Unemployment_Rate = SL.UEM.TOTL.ZS
+  )
+
+# Display first few rows to verify changes
+head(merged_olympics_gdp)
+```
+
+```{r, include = FALSE}
+# Fetch country metadata from World Bank API. This is used to have country names for the ISO3CountryCodes
+country_url <- "http://api.worldbank.org/v2/country/all?format=json&per_page=500"
+response <- GET(url = country_url)
+
+country_data <- content(response, "text") %>% fromJSON(flatten = TRUE)
+
+# Extract relevant columns
+country_list <- country_data[[2]] %>%
+  dplyr::select(id, name) %>%
+  dplyr::rename(CountryCode = id, CountryName = name)
+
+# Merge with merged_olympics_gdp dataset
+merged_olympics_gdp <- merged_olympics_gdp %>%
+  left_join(country_list, by = "CountryCode")
+
+head(merged_olympics_gdp)
+
+write.csv(merged_olympics_gdp, "merged_olympics_gdp_final1.csv", row.names = FALSE)
+```
+
+```{r, include = FALSE}
+merged_olympics_gdp <- merged_olympics_gdp %>%
+  mutate(
+    ## Season: 1 = Summer, 0 = Winter  (factor for nicer tables later)
+    Season = factor(if_else(Year %in% c(1996, 2000, 2004, 2008, 2012, 2016, 2020), 1, 0),
+                    levels = c(1, 0),
+                    labels = c("Summer", "Winter"))
+  )
+```
+
+```{r, , include = FALSE}
+### EDA starts here
+dim(merged_olympics_gdp)
+
+merged_olympics_gdp[merged_olympics_gdp == "" | merged_olympics_gdp == "N/A" | merged_olympics_gdp == "NULL"] <- NA
+```
+
+```{r, include = FALSE}
+# Convert population to millions (for readability)
+merged_olympics_gdp$Population <- merged_olympics_gdp$Population / 1e6
+
+# Save the modified dataset
+write.csv(merged_olympics_gdp, "merged_olympics_gdp_final2.csv", row.names = FALSE)
+
+# Check summary statistics
+head(merged_olympics_gdp)
+```
+
+```{r, include = FALSE, table1}
+# Extract column names and data types
+variable_summary <- tibble(
+  Variables = names(merged_olympics_gdp),
+  Type = sapply(merged_olympics_gdp, class)
+)
+
+# Add meaningful descriptions for each column
+variable_summary <- variable_summary %>%
+  mutate(
+    Description = case_when(
+      Variables == "CountryName" ~ "Full country name.",
+      Variables == "CountryCode" ~ "ISO3 country code.",
+      Variables == "Year" ~ "Olympic event year.",
+      Variables == "Total_Medals" ~ "Total medals won by the country in that year's Olympics.",
+      Variables == "GDP_per_capita" ~ "Gross Domestic Product per capita in constant 2015 USD.",
+      Variables == "Education_Expenditure" ~ "Government expenditure on education as a percentage of GDP.",
+      Variables == "Health_Expenditure" ~ "Total health expenditure as a percentage of GDP.",
+      Variables == "Population" ~ "Total population of the country in that year (in millions).",
+      Variables == "Unemployment_Rate" ~ "Unemployment rate as a percentage of total labor force.",
+      Variables == "Season" ~ "Indicates whether the olympic was held in the summer or winter",
+      TRUE ~ "No description available"
+    )
+  )
+
+# Create a nicely formatted summary table
+variable_summary_table <- variable_summary %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table 1: Summary of Variables in the Dataset**")
+  ) %>%
+  cols_label(
+    Variables = "Variables",
+    Type = "Type",
+    Description = "Description"
+  ) %>%
+  fmt_markdown(columns = c(Variables, Type, Description)) %>%
+  tab_options(
+    table.font.size = px(14),
+    column_labels.font.weight = "bold"
+  )
+
+variable_summary_table
+```
+
+```{r, include = FALSE}
+# Select only numeric columns except "Year"
+numeric_vars <- merged_olympics_gdp %>%
+  dplyr::select(where(is.numeric), -Year)
+
+# Create a summary table with one row per variable
+summary_table <- map_dfr(numeric_vars, function(column) {
+  tibble(
+    Min = min(column, na.rm = TRUE),
+    Q1 = quantile(column, probs = 0.25, na.rm = TRUE),
+    Median = median(column, na.rm = TRUE),
+    Q3 = quantile(column, probs = 0.75, na.rm = TRUE),
+    Mean = mean(column, na.rm = TRUE),
+    Max = max(column, na.rm = TRUE),
+    Num_NAs = sum(is.na(column))
+  )
+}, .id = "Variable")
+
+summary_gt_table <- summary_table %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table 2: Summary Statistics of Numeric Variables**")
+  ) %>%
+  cols_label(
+    Variable = "Variable",
+    Min = "Min",
+    Q1 = "1st Quartile",
+    Median = "Median",
+    Q3 = "3rd Quartile",
+    Mean = "Mean",
+    Max = "Max",
+    Num_NAs = "# of NAs"
+  ) %>%
+  fmt_number(
+    columns = c(Min, Q1, Median, Q3, Mean, Max),
+    decimals = 2
+  ) %>%
+  tab_options(
+    table.font.size = px(14),
+    column_labels.font.weight = "bold"
+  )
+
+# Display the formatted table
+summary_gt_table
+```
+
+```{r, include = FALSE}
+missing_summary <- merged_olympics_gdp %>%
+  group_by(CountryName) %>%
+  summarise(
+    Missing_GDP = sum(is.na(GDP_per_capita)),
+    Missing_Education = sum(is.na(Education_Expenditure)),
+    Missing_Health = sum(is.na(Health_Expenditure)),
+    Missing_Unemployment = sum(is.na(Unemployment_Rate)),
+  ) %>%
+  filter(Missing_GDP > 0 | Missing_Education > 0 | Missing_Health > 0 | Missing_Unemployment > 0)  # Show only rows with missing values
+
+# View missing summary
+print(missing_summary)
+```
+
+```{r, include = FALSE}
+# List of countries to remove. A country is removed if it has more than half of one of economic performance data missing
+
+countries_to_remove <- c(
+  "Channel Islands", "Korea, Dem. People's Rep.", "Montenegro",
+  "Liechtenstein", "North Macedonia", "Hong Kong SAR, China",
+  "Colombia", "Brunei Darussalam", "Eritrea", "Jordan"
+)
+
+# Filter out the countries
+merged_olympics_gdp <- merged_olympics_gdp %>% filter(!CountryName %in% countries_to_remove)
+```
+
+```{r, include = FALSE}
+# Perform Imputation: Fill missing values with that country’s median.
+merged_olympics_gdp <- merged_olympics_gdp %>%
+  group_by(CountryName) %>%
+  mutate(
+    GDP_per_capita = ifelse(is.na(GDP_per_capita), median(GDP_per_capita, na.rm = TRUE), GDP_per_capita),
+    Education_Expenditure = ifelse(is.na(Education_Expenditure), median(Education_Expenditure, na.rm = TRUE), Education_Expenditure),
+    Health_Expenditure = ifelse(is.na(Health_Expenditure), median(Health_Expenditure, na.rm = TRUE), Health_Expenditure),
+    Unemployment_Rate = ifelse(is.na(Unemployment_Rate), median(Unemployment_Rate, na.rm = TRUE), Unemployment_Rate)
+  ) %>%
+  ungroup()
+
+# Check if missing values remain
+sum(is.na(merged_olympics_gdp$GDP_per_capita))  # Should return 0
+sum(is.na(merged_olympics_gdp$Education_Expenditure))  # Should return 0
+sum(is.na(merged_olympics_gdp$Health_Expenditure))  # Should return 0
+sum(is.na(merged_olympics_gdp$Unemployment_Rate))  # Should return 0
+```
+
+```{r, include = FALSE}
+#Checking for Problematic Observations
+
+# Find the country with GDP_per_capita of 99,677.47
+high_gdp_country <- merged_olympics_gdp %>%
+  filter(GDP_per_capita >= 90000) %>%
+  dplyr::select(CountryName, GDP_per_capita, Year)
+
+# Find the country with Unemployment_Rate of 21.27
+high_unemployment_country <- merged_olympics_gdp %>%
+  filter(Unemployment_Rate >= 20) %>%
+  dplyr::select(CountryName, Unemployment_Rate, Year)
+
+# Display results
+print(high_gdp_country)
+print(high_unemployment_country)
+```
+
+```{r, include = FALSE}
+dim(merged_olympics_gdp)
+```
+
+```{r, include = FALSE, table2}
+# Select only numeric columns except "Year"
+numeric_vars <- merged_olympics_gdp %>%
+  dplyr::select(where(is.numeric), -Year)
+
+# Create a summary table with one row per variable
+summary_table <- map_dfr(numeric_vars, function(column) {
+  tibble(
+    Min = min(column, na.rm = TRUE),
+    Q1 = quantile(column, probs = 0.25, na.rm = TRUE),
+    Median = median(column, na.rm = TRUE),
+    Q3 = quantile(column, probs = 0.75, na.rm = TRUE),
+    Mean = mean(column, na.rm = TRUE),
+    Max = max(column, na.rm = TRUE),
+    Num_NAs = sum(is.na(column))
+  )
+}, .id = "Variable")
+
+summary_gt_table <- summary_table %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table 2: Summary Statistics of Numeric Variables**")
+  ) %>%
+  cols_label(
+    Variable = "Variable",
+    Min = "Min",
+    Q1 = "1st Quartile",
+    Median = "Median",
+    Q3 = "3rd Quartile",
+    Mean = "Mean",
+    Max = "Max",
+    Num_NAs = "# of NAs"
+  ) %>%
+  fmt_number(
+    columns = c(Min, Q1, Median, Q3, Mean, Max),
+    decimals = 2
+  ) %>%
+  tab_options(
+    table.font.size = px(14),
+    column_labels.font.weight = "bold"
+  )
+
+# Display the formatted table
+summary_gt_table
+```
+# 1. Introduction
+
+## 1.1 Introduction
+  The Olympics is one of the world's greatest sporting events that occurs once every 4 years, where
+athletes from across the globe compete for national pride and athletic
+excellence. While factors such as training and talent plays a
+significant role in an athlete's success, economic conditions may also
+influence a country's ability to produce medal-winning athletes.
+Wealthier countries may have better sports facilities, higher government
+investments in athletics, and greater access to elite coaching, which
+could contribute to higher Olympic medal counts. Thus, in this project,
+I would like to explore the relationship between economic indicators and
+medal counts in a country, aiming to identify which economic factors
+best predict the number of medals a country wins.
+
+To investigate this, I will use two datasets:
+
+**1.  Historical Olympic Medals Dataset** 
+
+  The Kaggle dataset,"Historical Olympic Medals Data (1994-2024)", provides medal counts for
+each nation across multiple Olympic Games. This dataset includes
+information on the number of gold, silver, and bronze medals won by each
+country.
+
+**2.  WorldBank Open Data API**
+
+  This API is used to retrieve economic indicators such as GDP per capita, education expenditure,
+health expenditure, population size, and unemployment rate for each
+country per year. These indicators provide insight into a country’s
+overall economic strength, investment in human capital, and potential
+capacity to support athletic programs.
+
+  I will merge these two datasets to create one data frame that shows the
+total number of medals won and the economic performance of a country in
+a specific year.
+
+    
+  So the research question that I will answer in this project is: “How do economic conditions influence a country’s success in the Olympics, and which indicators best predict medal performance". This question will allow us to assess how different economic factors correlate with a country’s performance, providing insights into the role of economic success in global sports competition. Additionally, I am planning to add a predictive modeling section, using the 2022 Olympic data to do the following:
+
+1.  Model Development: Multiple models will be created to predict medal
+    count based on a country’s economic measures, using data from
+    2000-2020.
+2.  2022 Medal Predictions: Using 2022’s economic performance, the
+    developed models will generate predictions for the number of medals
+    each country is expected to win.
+3.  Model Evaluation: The predicted medal counts will be compared to the
+    actual 2022 Olympic results to assess model accuracy and identify
+    which economic factor best predicts a country’s Olympic success.
+    This will provide insights on how well economic success alone can
+    predict a country’s success in the olympics and explore which
+    economic indicators are the strongest predictors of medal success.
+
+My hypothesis for the first part of the question: “How do economic
+conditions influence a country’s success in the Olympics” is that I
+expect country with high economic measures to perform well in the
+Olympics due to the investments and quality of training that the
+athletes can gain.
+
+# 2. Methodology
+
+## 2.1 Data Acquiring
+
+  As mentioned in the introduction I used WorldBank Open Data API for economic indicators and Historical Olympic Medals Dataset for medal counts.
+
+  For the WorldBank Open Data API, I had to make API calls to gather the data. The API call had a limit of 500 so I had to make multiple GET requests to retrieve a complete dataset. Furthermore, the API was queried separately for each economic indicator (GDP per capita, Government expenditure on education, Health expenditure, Total population, Unemployment rate). Each dataset contained the CountryCode in ISO3 format, the Year, and the respective economic indicator for that country in the specified year. Then I merged each data by CountryCode and year. 
+
+  The Olympic Medal Data, was a kaggle dataset so I downloaded it and read it as a datatable in R. The datasets contained CountryCode in NOC, the number of Gold, Silver, and Bronze medals won, and the total number of medals won by that country. Since there was one csv file per year, I merged the datasets by Country and Year. One note is that, the dataset only contained entries for countries that won at least one medal for that year. Since countries that did not win medals were absent from the dataset, I padded them with 0 medals to ensure accurate analysis.
+
+  After preparing both datasets, I merged them by matching the CountryCode from the World Bank dataset with the NOC codes from the Olympic dataset. However, NOC codes (CountryCode used in olympics) differ from ISO3 country codes, so for those countries whose codes did not map, I had to manually map the NOC code to a ISO3 code. (Could not do this for all countries as there were quite a number of them). Then I merged the two datasets together by Year and CountryCode. Lastly, I downloaded a dataset that maps ISO3 country code to Country Names using the WorldBank Open Data API and merged them to add a CountryName column for readability.
+  
+## 2.2 Data Cleaning & Wrangling
+
+After acquiring the dataset, several preprocessing steps were performed to ensure the data was clean, properly formatted, and is ready for analysis.
+
+**2.2.1 Enhancing Readability and Removing Unnecessary Columns**
+To improve the interpretability of the dataset, the following changes were made:
+
+- Renaming Columns:
+
+Economic indicators obtained from the World Bank API were originally stored under their respective API codes. These were renamed for clarity. For example, "SE.XPD.TOTL.GD.ZS" was renamed to "Education_Expenditure"
+
+- Adjusting the Population Scale:
+
+Population values were originally recorded as raw counts which are too large to read and interpret efficiently. Thus, these values were converted into millions.
+
+- Introducing new Columns:
+
+The new variable that I introduced is **Season** which takes value "Summer" if the olympic was held in the Summer and "Winter" if the olympics was held in the Winter. The reason why I introduced this variable is because, first, the total number of medals given out is less for Winter Olympics than for Summer Olympics, and because many countries excels in Winter Sports than others. In order to for the model to capture these changes, I have decided to introduce this variable.
+
+- Dropping Unnecessary Columns:
+
+The original Olympic dataset contained separate columns for gold, silver, and bronze medals. Since this analysis only considers total medal count, these columns were removed.
+Table 1 below presents the final list of variables in the cleaned dataset that has 9 columns and 892 rows:
+
+```{r, echo = FALSE}
+variable_summary_table
+```
+
+**2.2.2 Handling NA observations**
+
+Our dataset initially contained a total of 357 NA values over 4 economic indicators: 35 in GDP per capita, 198 in Education Expenditure, 55 in Health Expenditure, and 12 in Unemployment Rate. However, removing them from the dataset would have significantly reduced the dataset, leading to a loss of valuable data. Therefore, instead of dropping all NA observations, I applied imputation to keep as much information as possible.
+
+Imputation is the process of replacing missing values with estimated values based on the existing data. In this case, I used median imputation, where missing values for each economic indicator were replaced with the median value of that country. This approach is effective because the median is resistant to outliers, unlike the mean and it provides a reasonable estimate without introducing a huge artificial bias as values are not generated.
+
+
+However, this approach is problematic when a country is missing a significant portion of its data for an economic indicator, as imputing in this scenario would introduce too much uncertainty. To address this, I decided to remove countries that had had more than 6 NA values in at least one economic indicator. I decided to use 6 as the threshold because there were 12 Olympic Games from 2000 to 2022, so if a country has more than 6 NA values, it means the country has more than half of its data missing for an economic indicator. This threshold ensures that only countries with a reasonable amount of data for imputation remain in the dataset.
+
+This approach led me to remove a total of 10 countries from the dataset, such as North Korea, Colombia, and Channel Islands. And after removing the NA values I decided to perform imputation to minimize the loss of data.
+
+**2.2.3 Identifying Problematic Observations**
+
+To check for any problematic observations, I decided to look at the summary statistics for the economic indicator variables. As the economic indicator variables were floating point numbers, the summary presented the minimum, maximum, 1st & 3rd quadrant, median, and mean. Most of the values presented were in a reasonable range without any negative values. However, there were two numbers that struck me: maximum GDP per capita of 99,677.47 and maximum unemployment rate of 26.71 as these values were much larger than the 3rd quartile presented in the summary.
+
+To take a deeper look at these values and any other extreme observations I decided to filter the following observations: entries with GDP per capita greater than 90,000 and unemployment rate greater than 20%. Filtering for GDP per capita > 90,000 showed that there was only one row of extreme observation: Ireland in 2022 with GDP per Capita of 99677.47. After checking with external sources, I confirmed that this value accurately reflects Ireland’s GDP. As a result, I decided to keep this observation.
+
+Similarly, I decided to look at all of the data entries with an unemployment rate greater than 20%. This time there were a total of 18 rows, including countries such as Gabon, Greece, and Namibia to have an unemployment rate over 20% in certain years. After checking external sources, such as macrotrends.net, I came to the conclusion that these unemployment rates were legitimate values that occurred during economic crisis, so I decided to keep them in the dataset.
+
+While reviewing the dataset, I also noticed that the maximum population of 1,425.42 million is extremely high. However, given that China and India both have populations exceeding 1.4 billion, this value is realistic.  
+
+Thus, while there were extreme points in the dataset, no data points were removed.
+
+## 2.3 Data Cleaning & Wrangling
+
+After cleaning and wrangling, summary statistics were computed for the updated dataset which contained 772 rows with 9 columns. The table below presents the minimum, first quartile (Q1), median, third quartile (Q3), mean, maximum, and number of missing values.
+
+```{r, echo = FALSE}
+summary_gt_table
+```
+
+## 2.4 Preliminary Results
+
+**2.4.1 Top Performing Nations in Olympics**
+```{r, echo = FALSE, fig.width=7, fig.height=5, fig.align = 'center'}
+df <- merged_olympics_gdp
+
+# Summarize total medals per country
+top_countries <- df %>%
+  group_by(CountryName) %>%
+  summarise(Total_Medals = sum(Total_Medals, na.rm = TRUE)) %>%
+  arrange(desc(Total_Medals)) %>%
+  head(10)
+
+# Plot
+ggplot(top_countries, aes(x = reorder(CountryName, Total_Medals), y = Total_Medals)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Figure 1: Top 10 Countries with Most Olympic Medals (2000-2022)", 
+       x = "Country", 
+       y = "Total Medals") +
+  theme_minimal()
+```
+
+Figure 1 shows the top 10 countries with the highest total medal counts from 2000 to 2022. We see that China and Germany have a much higher highest medal count compared to the other countries, suggesting that these two nations have consistently ranked among the highest in total medals. Also, since Germany and China are considered to be “wealthy” countries with good economic performance, this result suggests that having a good economic performance could affect Olympic success.
+
+It is worthy to note that countries such as France, Australia, and Japan also rank among the top medal winners, despite having smaller populations than countries like the United States or Russia, which are missing from this ranking. This suggests that factors beyond total population affect Olympic Success, hinting at the possibility that economic performance could be playing a factor here.
+
+We also see that Norway, a relatively small country in terms of population, ranks in the top 10. This could be because Norway is a country that is extremely strong in Winter Sports. This reinforces the idea that while economic strength is important, other cultural and environmental factors also play a role in shaping a country’s Olympic success.
+
+
+```{r, include = FALSE}
+medals_by_year <- df %>%
+  group_by(Year) %>%
+  summarise(Total_Medals = sum(Total_Medals, na.rm = TRUE))
+
+ggplot(medals_by_year, aes(x = Year, y = Total_Medals)) +
+  geom_line(color = "red", size = 1) +
+  geom_point(color = "red", size = 2) +
+  labs(title = "Figure 2: Total Olympic Medals Over Time (2000-2022)",
+       x = "Year",
+       y = "Total Medals") +
+  theme_minimal()
+```
+
+**2.4.2 Relationship Between GDP Per Capita and Olympic Medals**
+```{r, echo = FALSE, fig.align = 'center'}
+ggplot(df, aes(x = GDP_per_capita, y = Total_Medals)) +
+  geom_point(alpha = 0.6, color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE, formula = 'y ~ x') +
+  scale_x_log10() +  # Log scale for better visibility
+  labs(title = "Figure 2: Relationship Between GDP Per Capita and Olympic Medals",
+       x = "GDP Per Capita (USD)",
+       y = "Total Medals") +
+  theme_minimal()
+
+```
+Figure 3 examines the relationship between GDP per capita and total medals won, using a log scale for GDP per capita to account for its wide distribution across countries. The positive trend in the regression line suggests that, on average, countries with higher GDP per capita tend to win more Olympic medals.
+However, this correlation is relatively weak, with significant variation in medal counts among nations with similar GDP per capita levels. A few wealthy nations do not perform exceptionally well, while some countries with mid-tier GDP performing extremely well.
+This finding suggests that while economic resources help support Olympic success, they are not the sole determinant. And we have to also think about other factors such as specialization in specific events, or population.
+
+**2.4.3 Comparing Multiple Economic Indicators**
+```{r, echo = FALSE, fig.align = 'center', message=FALSE,}
+df_long <- df %>%
+  dplyr::select(Total_Medals, GDP_per_capita, Education_Expenditure, Health_Expenditure, Population, Unemployment_Rate) %>%
+  pivot_longer(cols = c(GDP_per_capita, Education_Expenditure, Health_Expenditure, Population, Unemployment_Rate),
+               names_to = "Economic_Indicator",
+               values_to = "Value")
+
+ggplot(df_long, aes(x = Value, y = Total_Medals)) +
+  geom_point(alpha = 0.6, color = "darkgreen") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  facet_wrap(~Economic_Indicator, scales = "free_x") +
+  labs(title = "Figure 3: Comparison of Economic Indicators vs. Medal Count",
+       x = "Economic Indicator Value",
+       y = "Medal Count") +
+  theme_minimal()
+```
+Figure 3 extends the analysis on Figure 3 by examining the relationship between total medals and multiple economic indicators.
+We can see the following from plots:
+1.  Non-logged GDP per capita continues to show a positive but weak correlation with medal counts, reinforcing the       earlier findings.
+2.  Health expenditure is also positively correlated with medals, suggesting that countries investing in public          health and well-being may indirectly support better athlete performance. This makes sense, as a healthier            population could contribute to better sports participation and training outcomes.
+3.  Education expenditure has little correlation with almost a flat line and countries with high medal counts only       spend about 5% of its GDP which is approximately the same as the median in Table 2. This indicates that a            country’s education budget/quality of education in a country does not correlate to Olympic success.
+4.  Population size has a strong positive trend between medal counts, which is expected. However, we do see a huge       gap between countries with small and large populations, which is problematic. Furthemore, the countries with a       large population have extremely large medal counts which could be skewing the trend.
+5.  We see a slight downward trend between unemployment rate and medal counts. Although this trend is very weak, we      do see that countries with lower unemployment rates have higher medal counts. Furthermore, we do see that            countries with high medal counts have an unemployment rate of 10% or less. As low unemployment rates are often       see as an economic success, this further supports my proposed hypothesis.
+
+**2.4.4 Relationship Between Economic Indicators and Olympic Success**
+```{r, echo = FALSE, fig.align = 'center'}
+cor_data <- df %>%
+  dplyr::select(Total_Medals, GDP_per_capita, Education_Expenditure, 
+         Health_Expenditure, Population, Unemployment_Rate)
+
+# Compute correlation matrix
+cor_matrix <- cor(cor_data)
+
+ggcorrplot(cor_matrix, 
+           method = "square", 
+           type = "lower", 
+           lab = TRUE, 
+           outline.col = "white", 
+           colors = c("blue", "white", "red")) + 
+  ggtitle("Figure 4: Correlation Matrix of Economic Indicators")
+```
+
+Figure 4 presents the correlation matrix of key economic indicators and Olympic medal counts. The correlation values range from -1 to 1, with positive value/red colour indicating a direct relationship, negative values/blue colour indicate an inverse relationship, and values near zero suggesting no correlation.
+
+We see from the plot none of the variables shows an extremely strong positive correlation nor an extremely weak one. Suggesting that strong multicollinearity is not present.
+
+Now, GDP Per Capita and Health Expenditure shows a Moderate Positive Correlation with Medal Count (r=0.31 and r = 0.27 respectively) meaning that countries with higher GDP per capita and higher health expenditure tend to win more medals, supporting the idea that economic strength contributes to Olympic success. However, this correlation is moderate, meaning that GDP and Health Expenditure does not solely determine a country’s success in the Olympics.
+
+We see that Education Expenditure (r = 0.03) has almost no correlation between the share of GDP spent on education and Olympic performance. This suggests that general education spending does not directly translate to sports success. The same can be said to unemployment rate (r = -0.07) which suggests that a country's employment status does not affect its Olympic success.
+
+## 2.5 Model Explanation
+  As part of the analysis, I will fit 3 models to predict the medal count via various economic measures. They are a Negative Binomial GLM, a gradient-boosted tree, and a random forest. A short description of each model is below
+  
+**2.5.1 Negative Binomial GLM**
+  Generalized Linear Models (GLMs) extend linear regression to incorporate non-Gaussian response variables by specifying a link function and a distribution from the exponential family. Since the response variable (total medal count) is count data with overdispersion (variance = 132.84 > mean = 5.85) a Negative Binomial GLM was used. This model generalizes a Poisson regression by introducing an overdispersion parameter to account for extra variability. A log link was used to model medal counts as a function of GDP per capita, log population, health and education expenditures, unemployment rate, and Olympic season.
+  
+**2.5.2 Gradient-Boosted Trees**
+Gradient-Boosted Trees is an ensemble method that uses “K” additive weak base learners to minimize the residual error of the previous ensemble. XGBoost implements this using gradient descent on the loss function, which in this case was a Poisson loss appropriate for count data (objective = "count:poisson"). This allows the model to flexibly capture non-linearities and complex interactions between predictors. A grid search across combinations of learning rate ({0.05, 0.1, 0.3}) and max_depth ({3, 5, 7}) was used, with early stopping to prevent overfitting. The final model was trained using the best parameters from cross-validation.
+
+**2.5.3 Random Forest**
+Random Forest is an ensemble method that builds multiple decision trees on bootstrapped subsets of the training data and uses random feature selection at each split. Unlike bagging, which uses all features at each split, Random Forests increase diversity by selecting a random subset of predictors at each split, then choosing the best split among them. This decorrelation reduces variance and improves generalization, which should lead to better indication of how well economic factors predict olympic medal counts.
+
+We implemented the model using caret::train() with 10-fold cross-validation, tuning only the mtry hyperparameter, which is the number of predictors considered at each split. The number of trees (1000) and minimum node size of 5 were fixed. The best model configuration was selected based on the lowest cross-validated RMSE.
+
+## 2.6 Analysis Process
+To evaluate the model performance, I have split the dataset into three subsets: training set (data from 2000 - 2016), validation set (2018 and 2020), and test dataset (2020). Although I intended to use the 2024 data for testing, the World Bank API did not have economic data for that year.  In addition, I have normalized population and GDP per Capita by taking the log to account for their large magnitudes compared to other variables.
+
+**2.6.1 Training Stage**
+All three models—the Negative Binomial GLM, XGBoost, and Random Forest—were initially trained on data from 2000 to 2016. For the Negative Binomial GLM, the training step involved directly fitting the model to the full training set using maximum likelihood estimation. 
+
+The XGBoost model was trained using a Poisson loss function, appropriate for count data. I implemented a grid search to tune key hyperparameters, including learning rate and tree depth, with 10-fold cross-validation and early stopping. Once the best hyperparameter combination was identified based on validation RMSE, a final model was retrained on the entire training dataset using those parameters.
+
+The Random Forest model was trained using the caret package with 10-fold cross-validation to tune the number of randomly selected predictors at each split (mtry $\in$ {2, 3, 4, 5}). The final Random Forest model used the best mtry value based on validation RMSE.
+
+**2.6.2 Validation Stage**
+For the Negative Binomial GLM, since there is no hyperparameter tuning, there is nothing we had to do at this stage.
+
+The validation set was used to evaluate model performance and guide model selection. For the Negative Binomial GLM, no hyperparameter tuning was necessary, so validation involved computing the Root Mean Squared Error (RMSE) of the model’s predictions on the validation data.
+For XGBoost, the validation RMSEs from each fold of the 10-fold cross-validation were averaged to evaluate different combinations of parameters. The configuration with the lowest average RMSE was selected. Similarly, the Random Forest model’s validation performance was assessed across the different “mtry” values using RMSE, and the best-performing setting was selected for final testing.
+All three models were evaluated on the validation data, and their RMSEs were compared. This step ensured that the selected model configurations generalized relatively well to unseen data before proceeding to final testing.
+
+**2.6.3 Testing Stage**
+
+The final test set (2022 Winter Games) was used to evaluate the predictive performance of all three finalized models. Predictions were generated for each model on the test set, and both RMSE and Mean Absolute Error (MAE) were calculated to compare performance. Additionally, variable importance plots were created for both the XGBoost and Random Forest models to assess the relative influence of each predictor. For the Negative Binomial GLM, coefficient estimates and associated p-values were reported to facilitate interpretability.
+Scatterplots comparing predicted and actual medal counts were generated for each model to visualize performance. The model with the lowest test RMSE was selected as the best model for this analysis. 
+
+
+```{r, include = FALSE}
+# Process Data before Training/Validating/Testing
+merged_olympics_gdp <- merged_olympics_gdp |>
+  mutate(Log_Population = log(Population)) 
+
+merged_olympics_gdp <- merged_olympics_gdp |>
+  mutate(Log_GDP_per_Capita = log(GDP_per_capita)) 
+
+train_df <- merged_olympics_gdp %>% filter(Year <= 2016)
+val_df   <- merged_olympics_gdp %>% filter(Year %in% c(2018, 2020))
+test_df  <- merged_olympics_gdp %>% filter(Year %in% c(2022))
+```
+
+```{r, include = FALSE}
+mean(train_df$Total_Medals) # 5.847352
+var(train_df$Total_Medals) # 132.8378
+
+#Negative Binomial as there is overdispersion
+nb_fit <- MASS::glm.nb(
+              Total_Medals ~ Log_GDP_per_Capita + Log_Population +
+                             Health_Expenditure + Education_Expenditure +
+                             Unemployment_Rate + Season,
+              data = train_df)
+```
+
+```{r, include = FALSE}
+# Train the XGBoost
+param_grid <- expand.grid(
+  eta              = c(0.05, 0.1, 0.3),
+  max_depth        = c(3, 5, 7),
+  subsample        = 0.8,
+  colsample_bytree = 0.8
+)
+
+X_train <- model.matrix(~ Log_GDP_per_Capita + Log_Population + Health_Expenditure +
+                          Education_Expenditure + Unemployment_Rate +
+                          Season, data = train_df)
+y_train <- train_df$Total_Medals
+
+dtrain <- xgb.DMatrix(data = X_train, label = y_train)
+
+
+set.seed(123)
+
+cv_results <- list()
+
+for (i in 1:nrow(param_grid)) {
+  params <- list(
+    objective        = "count:poisson",
+    eta              = param_grid$eta[i],
+    max_depth        = param_grid$max_depth[i],
+    subsample        = param_grid$subsample[i],
+    colsample_bytree = param_grid$colsample_bytree[i],
+    eval_metric      = "rmse"
+  )
+  
+  cv <- xgb.cv(
+    params              = params,
+    data                = dtrain,
+    nrounds             = 500,
+    nfold               = 10,
+    early_stopping_rounds = 20,
+    verbose             = 0
+  )
+  
+  cv_results[[i]] <- list(
+    best_rmse  = min(cv$evaluation_log$test_rmse_mean),
+    best_iter  = cv$best_iteration,
+    params     = params
+  )
+}
+
+# Find best index
+best_index <- which.min(sapply(cv_results, function(x) x$best_rmse))
+best_model_info <- cv_results[[best_index]]
+
+# Train final model on entire train_df using best params
+xgb_poisson_final <- xgb.train(
+  params  = best_model_info$params,
+  data    = dtrain,
+  nrounds = best_model_info$best_iter,
+  verbose = 0
+)
+```
+
+```{r, include = FALSE}
+rf_train <- train_df %>%
+  dplyr::select(Total_Medals, Log_GDP_per_Capita, Log_Population,
+         Health_Expenditure, Education_Expenditure,
+         Unemployment_Rate, Season)
+
+# Tune only mtry
+set.seed(123)
+rf_grid <- expand.grid(mtry = 2:5)
+
+rf_control <- trainControl(method = "cv", number = 10)
+
+# Fit RF model via caret (only mtry tuned, ntree & nodesize fixed)
+rf_caret <- caret::train(
+  Total_Medals ~ .,
+  data       = rf_train,
+  method     = "rf",
+  trControl  = rf_control,
+  tuneGrid   = rf_grid,
+  metric     = "RMSE",
+  ntree      = 1000,           # set globally, not tunable here
+  nodesize   = 5               # also fixed
+)
+```
+
+```{r, include = FALSE}
+# Show best mtry and RMSE (Should go to validation)
+rf_caret$bestTune
+best_rmse_rf <- min(rf_caret$results$RMSE)
+cat("Best mtry:", rf_caret$bestTune$mtry, 
+    "| CV RMSE:", round(best_rmse_rf, 2), "\n")
+```
+
+
+```{r, include = FALSE}
+X_val <- model.matrix(~ Log_GDP_per_Capita + Log_Population + Health_Expenditure +
+                          Education_Expenditure + Unemployment_Rate +
+                          Season, data = val_df)
+y_val <- val_df$Total_Medals
+
+dval <- xgb.DMatrix(data = X_val, label = y_val)
+
+# Compute training predictions
+train_pred_glm <- predict(nb_fit, newdata = train_df, type = "response")
+train_pred_xgb <- predict(xgb_poisson_final, newdata = dtrain)  # dtrain is already xgb.DMatrix
+train_pred_rf  <- predict(rf_caret, newdata = train_df)
+
+# Compute training RMSE
+rmse_glm_train <- rmse(train_df$Total_Medals, train_pred_glm)
+rmse_xgb_train <- rmse(y_train, train_pred_xgb)
+rmse_rf_train  <- rmse(train_df$Total_Medals, train_pred_rf)
+
+val_pred_glm <- predict(nb_fit, newdata = val_df, type = "response")
+val_pred_xgb <- predict(xgb_poisson_final, newdata = dval)  # dtrain is already xgb.DMatrix
+val_pred_rf  <- predict(rf_caret, newdata = train_df)
+
+
+# Compute validation RMSE (already done)
+rmse_glm_val <- rmse(y_val, val_pred_glm)
+rmse_xgb_val <- rmse(y_val, val_pred_xgb)
+rmse_rf_val  <- rmse(y_val, val_pred_rf)
+
+# Combine into one table
+val_tbl <- data.frame(
+  Model        = c("Negative Binomial", "XGBoost", "Random Forest"),
+  Training_RMSE = c(rmse_glm_train,
+                    rmse_xgb_train,
+                    rmse_rf_train),
+  Validation_RMSE = c(rmse_glm_val,
+                      rmse_xgb_val,
+                      rmse_rf_val)
+)
+
+# Display table
+knitr::kable(val_tbl, digits = 3,
+             caption = "Training vs Validation RMSE")
+```
+
+```{r, include = FALSE}
+cv_summary <- data.frame(
+  eta       = param_grid$eta,
+  max_depth = param_grid$max_depth,
+  nrounds   = sapply(cv_results, function(x) x$best_iter),
+  rmse      = sapply(cv_results, function(x) x$best_rmse)
+)
+knitr::kable(cv_summary[order(cv_summary$rmse), ], caption = "Poisson XGBoost CV Results")
+```
+
+```{r, include = FALSE}
+## Test Section
+X_test <- model.matrix(~ Log_GDP_per_Capita + Log_Population + Health_Expenditure +
+                         Education_Expenditure + Unemployment_Rate +
+                         Season, data = test_df)
+
+y_test <- (test_df$Total_Medals)
+
+dtest <- xgb.DMatrix(data = X_test)
+
+test_pred_nb  <- predict(nb_fit,  newdata = test_df,  type = "response")
+test_pred_xgb <- predict(xgb_poisson_final, newdata = dtest)
+test_pred_rf  <- predict(rf_caret,  newdata = test_df)
+
+#Show MAE and RMSE errors
+library(Metrics)
+test_results <- data.frame(
+  Model = c("Negative Binomial", "XGBoost", "Random Forest"),
+  RMSE  = c(rmse(y_test, test_pred_nb),
+            rmse(y_test, test_pred_xgb),
+            rmse(y_test, test_pred_rf)),
+  MAE   = c(mae(y_test, test_pred_nb),
+            mae(y_test, test_pred_xgb),
+            mae(y_test, test_pred_rf))
+)
+
+knitr::kable(
+  test_results,
+  caption = "Test-set performance on 2022 Winter Games"
+)
+```
+
+```{r, include = FALSE}
+# Show coefficients for the NB GLM
+library(broom)
+nb_coef <- tidy(nb_fit)
+knitr::kable(nb_coef, digits = 4,
+             caption = "Negative-Binomial Coefficients with std error and p-value")
+```
+
+```{r, include = FALSE}
+#Variable Importance Plots for XGBoost and RandomForest
+
+## Random Forest
+vip_rf <- varImp(rf_caret, scale = FALSE)
+plot(vip_rf, top = 6, main = "Random Forest Variable Importance")
+
+## XGBoost
+feature_names <- colnames(X_train)
+
+# Get importance matrix
+importance_matrix <- xgb.importance(feature_names = feature_names, model = xgb_poisson_final)
+
+# Plot variable importance
+xgb.plot.importance(importance_matrix, top_n = 20, rel_to_first = TRUE, xlab = "Relative Importance")
+```
+
+# 3. Results
+
+
+```{r, include = FALSE}
+## scatter for best model (say XGB)
+ggplot(test_df, aes(x = test_pred_nb, y = Total_Medals)) +
+  geom_point(alpha = 0.7) +
+  geom_abline(colour = "red") +
+  labs(title = "Predicted vs Actual Medals – Negative Binomial",
+       x = "Predicted", y = "Actual") +
+  theme_minimal()
+
+ggplot(test_df, aes(x = test_pred_xgb, y = Total_Medals)) +
+  geom_point(alpha = 0.7) +
+  geom_abline(colour = "red") +
+  labs(title = "Predicted vs Actual Medals – XGBoost",
+       x = "Predicted", y = "Actual") +
+  theme_minimal()
+
+ggplot(test_df, aes(x = test_pred_rf, y = Total_Medals)) +
+  geom_point(alpha = 0.7) +
+  geom_abline(colour = "red") +
+  labs(title = "Predicted vs Actual Medals – randomForest",
+       x = "Predicted", y = "Actual") +
+  theme_minimal()
+
+## COMMENT:  In the report explain briefly which model you adopt for the
+## final 2024 prediction (usually the one with the lowest test RMSE) and
+## remind readers that coefficient significance (NB) and variable-importance
+## plots (XGB / RF) are provided earlier for interpretability.
+
+```
+
+```{r, include = FALSE}
+## ---- Table of best settings (compact) ----------------------------
+best_params <- data.frame(
+  Model      = c("XGBoost", "Random Forest"),
+  Setting    = c(
+    paste0("eta=", xgb_poisson_final$params$eta,
+           ", depth=", xgb_poisson_final$params$max_depth,
+           ", nrounds=", xgb_poisson_final$niter),
+    paste0("mtry=", rf_caret$bestTune$mtry,
+           ", ntree=1000, nodesize=5")
+  )
+)
+knitr::kable(best_params, caption = "Best Hyper-parameters selected by 10-fold CV")
+
+```
+
+## 3.1 Model Performance
+```{r, echo = FALSE}
+#table for RMSE values
+all_metrics <- data.frame(
+  Model = c("Negative Binomial", "XGBoost", "Random Forest"),
+  Training_RMSE = c(rmse_glm_train, rmse_xgb_train, rmse_rf_train),
+  Validation_RMSE = c(rmse_glm_val, rmse_xgb_val, rmse_rf_val),
+  Test_RMSE = c(rmse(y_test, test_pred_nb),
+                rmse(y_test, test_pred_xgb),
+                rmse(y_test, test_pred_rf)),
+  Test_MAE = c(mae(y_test, test_pred_nb),
+               mae(y_test, test_pred_xgb),
+               mae(y_test, test_pred_rf))
+)
+
+# Create the gt table
+all_metrics %>%
+  mutate(across(where(is.numeric), ~ round(., 3))) %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table 3: Model Performance Metrics**"),
+    subtitle = "RMSE and MAE for Training, Validation, and Test Sets"
+  ) %>%
+  cols_label(
+    Model = "Model",
+    Training_RMSE = "Training RMSE",
+    Validation_RMSE = "Validation RMSE",
+    Test_RMSE = "Test RMSE",
+    Test_MAE = "Test MAE"
+  ) %>%
+  fmt_number(
+    columns = where(is.numeric),
+    decimals = 3
+  ) %>%
+  tab_options(
+    table.font.size = px(14),
+    column_labels.font.weight = "bold"
+  )
+```
+
+Table 3 above shows the various RMSE values for different stages in the model processing stage. 
+
+The first thing we see is that the RMSE values are quite different across the three stages. For XGboost and Random Forest, RMSE is lowest for training, gets quite larger for validation, and then lower for testing. As models performing worse on unseen datasets are expected, and the errors are not too big, I can say that the model has generalized quite well.
+
+Now, the reason why the model might be performing significantly worse on validation could be because the 2020 olympics was held right after COVID, making country’s do significantly worse economically, leading the models to potentially underestimate the medal counts.
+
+When focusing on the relative accuracy, the table suggests taht XGBoost performs significantly better than the other models with the lowest RMSE and MAE values for all columns. This could be because its boosted trees can capture nonlinear saturation effects and interaction terms without manual specification. Then, RandomForest outperforms the Negative Binomial which is expected as the RandomForest is a machine learning algorithm with bagging, which can study the data better. 
+
+An interesting trend present here is that the RMSE for the GLM decreased in each stage of the process. This could be because GLM is strictly parametric, meaning that its variance is lower than the tree models’: it over-penalises the noisy COVID year but then delivers solid forecasts in 2022. Also, from the fact that the Season indicator variable has a large negative value, we can say that medal counts can not be fully explained by pure economics.
+
+Now, when looking at the test and validation RMSE values, we see that there is not a large difference between the GLM and the other two models. While the XGboost and randomForests are black boxes, we can actually see intercept values for GLM. Thus in practice, the GLM might be preferred over the other two for interpretability. 
+
+The fact that a relatively simple Negative Binomial GLM performs as well as the accuracy of two non-linear machine-learning algorithms suggests that a handful of economic indicators could have captured most of the cross-national signal in Olympic success. The detailed coefficient analysis below therefore provides meaningful insight into which indicators matter most.
+
+## 3.2 Negative Binomial GLM coefficients and p-values
+```{r, echo = FALSE}
+#table for GLM model coefficients
+nb_coef <- tidy(nb_fit)
+
+nb_coef_rounded <- nb_coef %>%
+  mutate(across(where(is.numeric), ~ round(., 4)))
+
+# Create gt table
+nb_coef_rounded %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table 4: Coefficients for Negative-Binomial GLM**")
+  ) %>%
+  cols_label(
+    term      = "Term",
+    estimate  = "Estimate",
+    std.error = "Std. Error",
+    statistic = "Statistic",
+    p.value   = "p-value"
+  ) %>%
+  fmt_number(
+    columns = where(is.numeric),
+    decimals = 4
+  ) %>%
+  tab_options(
+    table.font.size = px(14),
+    column_labels.font.weight = "bold"
+  )
+```
+
+In Table 4 above, we see the estimated value, standard error, test statistic, and p-values for each coefficient. First, we see that Log GDP per capita had the highest intercept of 0.6747 with a relatively low standard error. This means a 1 % rise in GDP per capita leads to a 0.68% increase in expected model counts, assuming other coefficients are held constant. This means that countries with high GDP per capita are likely to win more medals, aligning with the hypothesis that economic indicators are an essential factor of Olympic success.
+
+Furthermore, “log_population” also has a large intercept of 0.5372, aligning with the convention that countries with larger populations do well in the olympics. We see that these two coefficients mentioned have a much larger estimated value compared to the other economic indicators meaning that these two factors could be the main factors that determines a country’s success.
+
+We also see that other economic indicators such as education expenditure also have a positive correlation with medal counts. However, when looking at the p-values, we see that health expenditure and unemployment rate had values above 0.05. This means the two indicators are statistically insignificant (i.e. are not good predictors of medal counts). So, while some economic indicators, such as GDP per Capita, has a significant effect on medal count, not all economic factors actually affect a country’s Olympic success.
+
+## 3.3 Variable Importance Plots
+```{r, echo = FALSE}
+xgb.plot.importance(
+  importance_matrix, 
+  top_n         = 20, 
+  rel_to_first  = TRUE, 
+  xlab          = "Relative Importance",
+  main          = "Figure 5: XGBoost Variable Importance Plot"
+)
+```
+
+```{r, echo = FALSE}
+## Random Forest
+plot(
+  vip_rf, 
+  top    = 6,
+  main   = "Figure 6: Random Forest Variable Importance Plot"
+)
+
+```
+
+Above, we have two variable importance plots. One from the XGBoost (Figure 5) and another for RandomForest (Figure 6). We see that both plots are almost identical. 
+
+In both plots, log population and log GDP per Capita are the two variables with the largest importance values, with log population being first for both. This aligns with the results from Table 2, and further amplifies the fact that GDP per capita is indeed an essential economic factor at predicting medal counts.
+
+From Figure 5, we see that the xgboost has ranked education expenditure, health expenditure, and unemployment rate with relatively low importance of 0.2. As these have a much lower importance than the other 3 variables presented and as XGboost was the best predicting model, it shows how not all economic indicators have a huge effect on a country’s Olympic Success.
+
+It is important to note that while Negative Binomial GLM and XGboost did not have health expenditure as a significant/important variable, the RandomForest does as its 3rd most important variable. This shows how complicated the relationship between various economic factors and total medals are and how it might not just be a linear relationship.
+
+## 3.4 Predicted vs Actual Medal Counts 
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# Load required libraries
+library(ggplot2)
+library(patchwork)
+
+# Create the 3 individual plots
+p_nb <- ggplot(test_df, aes(x = test_pred_nb, y = Total_Medals)) +
+  geom_point(alpha = 0.7) +
+  geom_abline(colour = "red") +
+  labs(subtitle = "Negative Binomial",
+       x = "Predicted", y = "Actual") +
+  theme_minimal()
+
+p_xgb <- ggplot(test_df, aes(x = test_pred_xgb, y = Total_Medals)) +
+  geom_point(alpha = 0.7) +
+  geom_abline(colour = "red") +
+  labs(subtitle = "XGBoost",
+       x = "Predicted", y = "Actual") +
+  theme_minimal()
+
+p_rf <- ggplot(test_df, aes(x = test_pred_rf, y = Total_Medals)) +
+  geom_point(alpha = 0.7) +
+  geom_abline(colour = "red") +
+  labs(subtitle = "Random Forest",
+       x = "Predicted", y = "Actual") +
+  theme_minimal()
+
+# Create empty placeholder plot for the 4th cell
+p_empty <- ggplot() + theme_void()
+
+# Combine plots in a 2x2 grid and add a title
+(p_nb + p_xgb) /
+(p_rf + p_empty) +
+  plot_annotation(
+    title = "Figure 7: Predicted vs Actual Total Medal \nCounts for Different Models",
+    theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+  )
+```
+
+Figure 7 above shows the predicted number of medal count plotted against the actual medal count for each model, which is the equivalent to the interactive visualization 1 on the website. All three plots show a dense stack of points at (0,0) showing that there is zero-inflation present in the data.
+
+From the Negative Binomial plot, we see that almost all of the countries lie above the red linear 45 degrees, suggesting that the GLM is underestimating model count for almost all countries. However, for the other two models, we see that points lie relatively close to the red line indicating that they do a much better prediction of the data. 
+
+When going over to the interactive visualization, we see that all 3 of the graphs underestimate certain countries such as Canada and Germany. This reinforces the idea that economic factors are not the only indicator of Olympic success and that external factors do have a huge impact.
+
+# 4. Conclusion and Summary
+This study demonstrates that a country's economic strength is one of the key drivers of Olympic medal performance. Across the three different models (the interpretable Negative-Binomial GLM and two tree-based machine learning models: Random Forest and XGBoost), log GDP per capita and log population consistently emerged as the most important predictors. In the GLM, a 1 % rise in GDP per capita increases the expected medal haul by 0.68 %, while a 1 % rise in population contributes a further 0.54 %. The two importance plots from Fugures 5 and 6 corroborated that ranking and show a steep drop-off to the next tier of variables. While GDP per capita clearly reflects a nation’s wealth and access to athletic infrastructure, population is not strictly an economic measure; instead, it likely captures the size of the talent pool and a country’s overall capacity to field athletes across many sports. Together, these two factors form a robust baseline for predicting Olympic success.
+
+However, several other economic indicators, including health expenditure and unemployment rate, were found to be statistically insignificant or of low importance in the machine learning models. This suggests that not all economic factors are equally influential in shaping Olympic outcomes. For example, while one might expect higher health spending to correlate with better athlete performance, it may not directly impact the elite training infrastructure or sport-specific programs that lead to an excellent athlete. Similarly, macroeconomic conditions like unemployment may not meaningfully capture the focused investment required for Olympic achievement. In contrast, education expenditure did show a modest but statistically significant effect, indicating that long-term human capital investment may support athletic development in more subtle ways.
+
+Although XGBoost achieved the lowest RMSE of 4.55 medals on the test set, and Random Forest and NB-GLM followed behind, all models did have notable prediction errors. As discussed in Section 3.4, many country’s model counts were under- or over-predicted. This reflects the fact that economic capacity, while essential, is not the sole determinant of Olympic success. Factors such as sport-specific investment strategies, cultural preferences, and geopolitical influences likely play a substantial role. These factors are not captured in broad economic indicators and point to the limits of prediction based solely on these metrics.
+
+**Limitations**
+
+This analysis has several limitations. First, the World Bank indicators are yearly measures and can not fully reflect last-minute economic shifts or targeted sport expenditures. Second, imputation was used for a small number of missing values, which introduces uncertainty not reflected in standard errors. In addition to this, a small but insignificant number of countries were not included because of the lack of information in the API. For these reasons the dataset does not give a complete representation of the countries, indicating the limitations that exist within the dataset. Third, the medal dataset lists only nations that earned at least one medal in a given year. Although zeros were padded during the merging stage, the dataset underrepresents countries with extremely poor Olympics performance. Finally, many potentially relevant features such as host-nation effects, national sport policy, and training infrastructure were not included.
+
+```{r, include = FALSE, eval = FALSE}
+# ── build a tidy data frame with one row per model & country ──────────────
+plot_dat <- bind_rows(
+  test_df %>% 
+    transmute(Model = "Negative Binomial",
+              CountryName,
+              Predicted = test_pred_nb,
+              Actual    = Total_Medals),
+  test_df %>% 
+    transmute(Model = "XGBoost",
+              CountryName,
+              Predicted = test_pred_xgb,
+              Actual    = Total_Medals),
+  test_df %>% 
+    transmute(Model = "Random Forest",
+              CountryName,
+              Predicted = test_pred_rf,
+              Actual    = Total_Medals)
+) %>% 
+  mutate(label = paste0("Country: ", CountryName,
+                        "<br>Predicted: ", round(Predicted, 2),
+                        "<br>Actual: ", Actual))
+
+# global axis limit so every trace rests on the same scale
+max_val <- max(plot_dat$Predicted, plot_dat$Actual, na.rm = TRUE)
+
+# ── create one scatter trace per model (all share the same plot) ──────────
+fig <- plot_ly() |>
+  # trace 1 ─ Negative Binomial (visible by default)
+  add_markers(data = filter(plot_dat, Model == "Negative Binomial"),
+              x = ~Predicted, y = ~Actual, text = ~label,
+              hoverinfo = "text", 
+              marker = list(color = "black", opacity = 0.7),
+              visible = TRUE) |>
+  # trace 2 ─ XGBoost (hidden initially)
+  add_markers(data = filter(plot_dat, Model == "XGBoost"),
+              x = ~Predicted, y = ~Actual, text = ~label,
+              hoverinfo = "text",
+              marker = list(color = "black", opacity = 0.7),
+              visible = FALSE) |>
+  # trace 3 ─ Random Forest (hidden initially)
+  add_markers(data = filter(plot_dat, Model == "Random Forest"),
+              x = ~Predicted, y = ~Actual, text = ~label,
+              hoverinfo = "text",
+              marker = list(color = "black", opacity = 0.7),
+              visible = FALSE) |>
+  # trace 4 ─ identity (y = x) line — stays visible for all models
+  add_lines(x = c(0, max_val),
+            y = c(0, max_val),
+            name = "Identity line", showlegend = FALSE,
+            line = list(color = "red"), inherit = FALSE)
+
+# ── add buttons that toggle the first three traces ────────────────────────
+# Use same fig as before (after adding traces)
+fig <- fig %>%
+  layout(
+    # Make room for titles
+    margin = list(t = 120),
+
+    # Wider figure
+    width = 900,
+    height = 650,
+
+    # Keep this subtitle; this is updated dynamically
+    title = list(text = "<b>Figure 7: Predicted vs Actual Medal Count for Various Models</b>",
+                 font = list(size = 16)),
+    
+    # Explicitly include zero in axes and zoom out
+    xaxis = list(title = "Predicted", rangemode = "tozero", range = c(0, max_val + 5)),
+    yaxis = list(title = "Actual", rangemode = "tozero", range = c(0, max_val + 5)),
+
+    # Buttons stay up top, positioned with space from title
+    updatemenus = list(
+      list(
+        type = "buttons",
+        direction = "right",
+        xanchor = "left",
+        yanchor = "top",
+        x = 0,
+        y = 1.25,  # higher up
+        buttons = list(
+          list(label = "Negative Binomial",
+               method = "update",
+               args = list(
+                 list(visible = c(TRUE,  FALSE, FALSE, TRUE)),
+                 list(title = "<b>Figure 7: Predicted vs Actual Medal Count for Various Models</b>")
+               )),
+          list(label = "XGBoost",
+               method = "update",
+               args = list(
+                 list(visible = c(FALSE, TRUE,  FALSE, TRUE)),
+                 list(title = "<b>Figure 7: Predicted vs Actual Medal Count for Various Models</b>")
+               )),
+          list(label = "Random Forest",
+               method = "update",
+               args = list(
+                 list(visible = c(FALSE, FALSE, TRUE,  TRUE)),
+                 list(title = "<b>Figure 7: Predicted vs Actual Medal Count for Various Models</b>")
+               ))
+        )
+      )
+    )
+  )
+```
+
+```{r, include = FALSE, eval = FALSE}
+fig 
+```
+
+```{r, eval = FALSE, include = FALSE}
+library(dplyr)
+library(plotly)
+
+avg_gdp_year <- merged_olympics_gdp %>%
+  group_by(Year) %>%
+  summarise(Avg_GDP_per_Capita = mean(GDP_per_capita, na.rm = TRUE))
+
+plot_ly(avg_gdp_year,
+        x = ~Year, y = ~Avg_GDP_per_Capita,
+        type = 'scatter', mode = 'lines+markers',
+        line = list(color = 'royalblue'),
+        text = ~paste("Year:", Year, "<br>Avg GDP:", round(Avg_GDP_per_Capita, 0)),
+        hoverinfo = "text") %>%
+  layout(
+    title = NULL,
+    xaxis = list(title = "Year"),
+    yaxis = list(title = "Average GDP per Capita"),
+    annotations = list(
+      list(
+        text = "<b>Figure 2:</b> Average GDP per Capita Over Time",
+        xref = "paper", yref = "paper",
+        x = 0, y = 1.12, showarrow = FALSE, font = list(size = 18)
+      ),
+      list(
+        text = "Each point shows the average GDP per capita across all countries in that Olympic year.",
+        xref = "paper", yref = "paper",
+        x = 0, y = 1.06, showarrow = FALSE, font = list(size = 14)
+      )
+    ),
+    margin = list(t = 100)
+  )
+```
+
+```{r, include = FALSE, eval = FALSE}
+scatter_data <- merged_olympics_gdp %>%
+  filter(!is.na(Total_Medals), !is.na(GDP_per_capita))
+
+plot_ly(scatter_data,
+        x = ~GDP_per_capita, y = ~Total_Medals,
+        color = ~Season,
+        colors = c("Summer" = "orange", "Winter" = "skyblue"),
+        type = 'scatter', mode = 'markers',
+        text = ~paste("Country:", CountryName,
+                      "<br>Year:", Year,
+                      "<br>GDP per Capita:", round(GDP_per_capita),
+                      "<br>Total Medals:", Total_Medals),
+        hoverinfo = 'text',
+        marker = list(opacity = 0.7, size = 8)) %>%
+  layout(
+    title = NULL,
+    xaxis = list(title = "GDP per Capita"),
+    yaxis = list(title = "Total Medals"),
+    annotations = list(
+      list(
+        text = "<b>Figure 3:</b> GDP per Capita vs. Total Medals",
+        xref = "paper", yref = "paper",
+        x = 0, y = 1.12, showarrow = FALSE, font = list(size = 18)
+      ),
+      list(
+        text = "Each point is a country-year, coloured by Olympic season.",
+        xref = "paper", yref = "paper",
+        x = 0, y = 1.06, showarrow = FALSE, font = list(size = 14)
+      )
+    ),
+    margin = list(t = 100)
+  )
+```
