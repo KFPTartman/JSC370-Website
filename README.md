@@ -1,6 +1,6 @@
 # JSC370-Project
 
-Link to website: https://kfptartman.github.io/JSC370-Website/#1_Introduction
+Link to website: https://KFPTartman.github.io/JSC370-Website/index.html
 
 Project Title: Predicting Olympic Medal Counts Using Linear and Machine Learning Models
 
