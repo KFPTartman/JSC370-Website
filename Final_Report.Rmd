@@ -560,6 +560,7 @@ athletes can gain.
 After acquiring the dataset, several preprocessing steps were performed to ensure the data was clean, properly formatted, and is ready for analysis.
 
 **2.2.1 Enhancing Readability and Removing Unnecessary Columns**
+
 To improve the interpretability of the dataset, the following changes were made:
 
 - Renaming Columns:
@@ -617,6 +618,7 @@ summary_gt_table
 ## 2.4 Preliminary Results
 
 **2.4.1 Top Performing Nations in Olympics**
+
 ```{r, echo = FALSE, fig.width=7, fig.height=5, fig.align = 'center'}
 df <- merged_olympics_gdp
 
@@ -659,6 +661,7 @@ ggplot(medals_by_year, aes(x = Year, y = Total_Medals)) +
 ```
 
 **2.4.2 Relationship Between GDP Per Capita and Olympic Medals**
+
 ```{r, echo = FALSE, fig.align = 'center'}
 ggplot(df, aes(x = GDP_per_capita, y = Total_Medals)) +
   geom_point(alpha = 0.6, color = "blue") +
@@ -675,6 +678,7 @@ However, this correlation is relatively weak, with significant variation in meda
 This finding suggests that while economic resources help support Olympic success, they are not the sole determinant. And we have to also think about other factors such as specialization in specific events, or population.
 
 **2.4.3 Comparing Multiple Economic Indicators**
+
 ```{r, echo = FALSE, fig.align = 'center', message=FALSE,}
 df_long <- df %>%
   dplyr::select(Total_Medals, GDP_per_capita, Education_Expenditure, Health_Expenditure, Population, Unemployment_Rate) %>%
@@ -729,12 +733,15 @@ We see that Education Expenditure (r = 0.03) has almost no correlation between t
   As part of the analysis, I will fit 3 models to predict the medal count via various economic measures. They are a Negative Binomial GLM, a gradient-boosted tree, and a random forest. A short description of each model is below
   
 **2.5.1 Negative Binomial GLM**
+
   Generalized Linear Models (GLMs) extend linear regression to incorporate non-Gaussian response variables by specifying a link function and a distribution from the exponential family. Since the response variable (total medal count) is count data with overdispersion (variance = 132.84 > mean = 5.85) a Negative Binomial GLM was used. This model generalizes a Poisson regression by introducing an overdispersion parameter to account for extra variability. A log link was used to model medal counts as a function of GDP per capita, log population, health and education expenditures, unemployment rate, and Olympic season.
   
 **2.5.2 Gradient-Boosted Trees**
+
 Gradient-Boosted Trees is an ensemble method that uses “K” additive weak base learners to minimize the residual error of the previous ensemble. XGBoost implements this using gradient descent on the loss function, which in this case was a Poisson loss appropriate for count data (objective = "count:poisson"). This allows the model to flexibly capture non-linearities and complex interactions between predictors. A grid search across combinations of learning rate ({0.05, 0.1, 0.3}) and max_depth ({3, 5, 7}) was used, with early stopping to prevent overfitting. The final model was trained using the best parameters from cross-validation.
 
 **2.5.3 Random Forest**
+
 Random Forest is an ensemble method that builds multiple decision trees on bootstrapped subsets of the training data and uses random feature selection at each split. Unlike bagging, which uses all features at each split, Random Forests increase diversity by selecting a random subset of predictors at each split, then choosing the best split among them. This decorrelation reduces variance and improves generalization, which should lead to better indication of how well economic factors predict olympic medal counts.
 
 We implemented the model using caret::train() with 10-fold cross-validation, tuning only the mtry hyperparameter, which is the number of predictors considered at each split. The number of trees (1000) and minimum node size of 5 were fixed. The best model configuration was selected based on the lowest cross-validated RMSE.
@@ -743,6 +750,7 @@ We implemented the model using caret::train() with 10-fold cross-validation, tun
 To evaluate the model performance, I have split the dataset into three subsets: training set (data from 2000 - 2016), validation set (2018 and 2020), and test dataset (2020). Although I intended to use the 2024 data for testing, the World Bank API did not have economic data for that year.  In addition, I have normalized population and GDP per Capita by taking the log to account for their large magnitudes compared to other variables.
 
 **2.6.1 Training Stage**
+
 All three models—the Negative Binomial GLM, XGBoost, and Random Forest—were initially trained on data from 2000 to 2016. For the Negative Binomial GLM, the training step involved directly fitting the model to the full training set using maximum likelihood estimation. 
 
 The XGBoost model was trained using a Poisson loss function, appropriate for count data. I implemented a grid search to tune key hyperparameters, including learning rate and tree depth, with 10-fold cross-validation and early stopping. Once the best hyperparameter combination was identified based on validation RMSE, a final model was retrained on the entire training dataset using those parameters.
@@ -750,6 +758,7 @@ The XGBoost model was trained using a Poisson loss function, appropriate for cou
 The Random Forest model was trained using the caret package with 10-fold cross-validation to tune the number of randomly selected predictors at each split (mtry $\in$ {2, 3, 4, 5}). The final Random Forest model used the best mtry value based on validation RMSE.
 
 **2.6.2 Validation Stage**
+
 For the Negative Binomial GLM, since there is no hyperparameter tuning, there is nothing we had to do at this stage.
 
 The validation set was used to evaluate model performance and guide model selection. For the Negative Binomial GLM, no hyperparameter tuning was necessary, so validation involved computing the Root Mean Squared Error (RMSE) of the model’s predictions on the validation data.
@@ -1214,7 +1223,7 @@ However, several other economic indicators, including health expenditure and une
 
 Although XGBoost achieved the lowest RMSE of 4.55 medals on the test set, and Random Forest and NB-GLM followed behind, all models did have notable prediction errors. As discussed in Section 3.4, many country’s model counts were under- or over-predicted. This reflects the fact that economic capacity, while essential, is not the sole determinant of Olympic success. Factors such as sport-specific investment strategies, cultural preferences, and geopolitical influences likely play a substantial role. These factors are not captured in broad economic indicators and point to the limits of prediction based solely on these metrics.
 
-**Limitations**
+## **Limitations**
 
 This analysis has several limitations. First, the World Bank indicators are yearly measures and can not fully reflect last-minute economic shifts or targeted sport expenditures. Second, imputation was used for a small number of missing values, which introduces uncertainty not reflected in standard errors. In addition to this, a small but insignificant number of countries were not included because of the lack of information in the API. For these reasons the dataset does not give a complete representation of the countries, indicating the limitations that exist within the dataset. Third, the medal dataset lists only nations that earned at least one medal in a given year. Although zeros were padded during the merging stage, the dataset underrepresents countries with extremely poor Olympics performance. Finally, many potentially relevant features such as host-nation effects, national sport policy, and training infrastructure were not included.
 
