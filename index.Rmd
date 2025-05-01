@@ -13,4 +13,4 @@ This project investigates the relationship between a country’s economic indica
 
 All models found GDP per capita and population to be the most influential predictors of medal count, though education expenditure showed a modest effect as well. XGBoost achieved the lowest test RMSE, but the NB-GLM produced competitive results with greater interpretability. However, substantial residual error in all models suggests that economic strength alone cannot fully explain Olympic success, underscoring the importance of unmeasured factors such as sport-specific policy, cultural investment, and national athletic strategy.
 
-**[Link](Final_Report.pdf) to download Report:**:
+**[Link to download Report](Final_Report.pdf)**

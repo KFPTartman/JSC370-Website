@@ -1202,7 +1202,7 @@ p_empty <- ggplot() + theme_void()
   )
 ```
 
-```{r, echo = FALSE, eval = FALSE}
+```{r, echo = FALSE}
 # ── build a tidy data frame with one row per model & country ──────────────
 plot_dat <- bind_rows(
   test_df %>% 
@@ -1307,7 +1307,7 @@ fig <- fig %>%
   )
 ```
 
-```{r, echo = FALSE, eval = FALSE}
+```{r, echo = FALSE}
 fig 
 ```
 Figure 7 above shows the predicted number of medal count plotted against the actual medal count for each model, which is the equivalent to the interactive visualization 1 on the website. All three plots show a dense stack of points at (0,0) showing that there is zero-inflation present in the data.
